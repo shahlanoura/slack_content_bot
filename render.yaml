@@ -1,16 +1,12 @@
 services:
-  - type: worker  # ← Change from 'web' to 'worker'
+  - type: worker
     name: slackbot-worker
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m app.slack_app  # ← Run the Socket Mode app directly
+    startCommand: python -m app.main
     envVars:
       - key: SLACK_BOT_TOKEN
-        sync: false
       - key: SLACK_SIGNING_SECRET
-        sync: false
-      - key: SLACK_APP_TOKEN  
-        sync: false
+      - key: SLACK_APP_TOKEN
       - key: SERPER_API_KEY
-        sync: false
