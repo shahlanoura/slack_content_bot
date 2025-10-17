@@ -251,4 +251,5 @@ def get_user_email(user_id):
 
 if __name__ == "__main__":
     handler = SocketModeHandler(slack_app, os.environ["SLACK_APP_TOKEN"])
+    print("Slack bot is starting...")
     handler.start()

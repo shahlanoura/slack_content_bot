@@ -1,5 +1,5 @@
 # Core ML with CPU-only PyTorch
-torch==2.8.0+cpu
+torch==2.9.0
 transformers>=4.56.0,<4.58.0
 sentence-transformers==5.1.1
 
