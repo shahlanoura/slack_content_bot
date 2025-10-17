@@ -15,14 +15,14 @@ from app.pipeline import (
     generate_post_idea,
     generate_pdf_report
 )
-from dotenv import load_dotenv
+
 import requests
 
-load_dotenv()
+
 
 slack_app = App(
-    token=os.environ["SLACK_BOT_TOKEN"],
-    signing_secret=os.environ["SLACK_SIGNING_SECRET"]
+    token=os.environ["SLACK_BOT_TOKEN"].strip(),
+    signing_secret=os.environ["SLACK_SIGNING_SECRET"].strip()
 )
 
 def parse_keywords_from_text(raw_text):
@@ -250,6 +250,6 @@ def get_user_email(user_id):
 # Start app
 
 if __name__ == "__main__":
-    handler = SocketModeHandler(slack_app, os.environ["SLACK_APP_TOKEN"])
+    handler = SocketModeHandler(slack_app, os.environ["SLACK_APP_TOKEN"].strip())
     print("Slack bot is starting...")
     handler.start()
