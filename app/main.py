@@ -5,10 +5,26 @@ from slack_bolt.adapter.fastapi import SlackRequestHandler
 from app.slack_app import slack_app
 from dotenv import load_dotenv
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()  
 
 app = FastAPI()
 handler = SlackRequestHandler(slack_app)
+import os
+import sys
+
+print("Current directory:", os.getcwd())
+print("Files in directory:", os.listdir('.'))
+if os.path.exists('app'):
+    print("App directory contents:", os.listdir('app'))
+
+try:
+    from app.slack_app import slack_app
+    from slack_bolt.adapter.fastapi import SlackRequestHandler
+    print("✅ Successfully imported slack_app")
+except ImportError as e:
+    print(f"❌ Import error: {e}")
+    print("Python path:", sys.path)
+    raise
 
 @app.get("/")
 def home():
