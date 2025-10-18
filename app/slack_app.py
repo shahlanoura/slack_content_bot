@@ -247,9 +247,5 @@ def get_user_email(user_id):
     except Exception as e:
         print(f"Error getting user email: {e}")
     return None
-# Start app
 
-if __name__ == "__main__":
-    handler = SocketModeHandler(slack_app, os.environ["SLACK_APP_TOKEN"].strip())
-    print("Slack bot is starting...")
-    handler.start()
+
