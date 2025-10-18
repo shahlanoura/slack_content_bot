@@ -6,12 +6,9 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
+from slack_bolt import App
 
-slack_app = App(
-    token=os.getenv("SLACK_BOT_TOKEN"),
-    signing_secret=os.getenv("SLACK_SIGNING_SECRET")
-)
-
+slack_app = App(token=os.getenv("SLACK_BOT_TOKEN"), signing_secret=os.getenv("SLACK_SIGNING_SECRET"))
 from app.slack_app import register_handlers
 register_handlers(slack_app)
 
