@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from slack_bolt import App
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 
@@ -23,13 +24,15 @@ def handle_mention(event, say):
 app = FastAPI()
 handler = SlackRequestHandler(slack_app)
 
+# Slack Events Endpoint
 @app.post("/slack/events")
-async def endpoint(req: Request):
+async def slack_events(req: Request):
     return await handler.handle(req)
 
-@app.get("/")
+# Root Endpoint: responds to GET and HEAD for Render health check
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
-    return {"message": "Slack bot is running!"}
+    return JSONResponse(content={"message": "Slack bot is running!"})
 
 # -----------------------------
 # 3. Run server (Render-ready)
@@ -38,5 +41,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))  # Render assigns this
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-
