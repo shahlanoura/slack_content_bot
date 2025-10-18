@@ -1,13 +1,8 @@
-import os
-import io
+# slack_app.py
 import threading
 import pandas as pd
-import csv
 import ast
-from slack_bolt import App
-from app.email_service import send_pdf_via_email
-from slack_bolt.adapter.socket_mode import SocketModeHandler
-from slack_sdk.errors import SlackApiError
+import requests
 from app.pipeline import (
     clean_keywords,
     cluster_keywords,
@@ -15,15 +10,7 @@ from app.pipeline import (
     generate_post_idea,
     generate_pdf_report
 )
-
-import requests
-
-
-
-slack_app = App(
-    token=os.environ["SLACK_BOT_TOKEN"].strip(),
-    signing_secret=os.environ["SLACK_SIGNING_SECRET"].strip()
-)
+from app.email_service import send_pdf_via_email
 
 def parse_keywords_from_text(raw_text):
     """
@@ -40,9 +27,8 @@ def parse_keywords_from_text(raw_text):
 
     text = raw_text.strip()
 
-    # Remove leading "keyword" prefix 
+    # Remove leading "keyword" prefix
     if text.lower().startswith("keyword"):
-        # remove only the first occurrence of "keyword"
         text = text[len("keyword"):].strip()
 
     # Handle Python list input
@@ -55,52 +41,52 @@ def parse_keywords_from_text(raw_text):
     except Exception:
         pass
 
-    # --- 3️⃣ Normalize commas/newlines ---
+    # Normalize commas/newlines
     text = text.replace("\r", "\n").replace(",", "\n")
-
-    # --- 4️⃣ Split and clean ---
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     keywords = [kw for kw in lines if kw.lower() != "keyword"]
 
-    # --- 5️⃣ Deduplicate ---
+    # Deduplicate
     return list(dict.fromkeys(keywords))
 
 
-
-
-
-# Async processing
-
-def process_keywords_async(command, respond, file_content=None):
+def process_keywords_async(command, respond, slack_app, file_content=None):
+    """
+    Process keywords asynchronously:
+      1. Parse & clean
+      2. Cluster
+      3. Fetch outlines
+      4. Generate post ideas
+      5. Generate PDF
+      6. Send DM & email
+    """
     try:
+        # Parse keywords
         if file_content:
-            df_keywords = pd.DataFrame({"keyword": parse_keywords_from_text(file_content.decode("utf-8", errors="ignore"))})
+            keywords_list = parse_keywords_from_text(file_content.decode("utf-8", errors="ignore"))
         else:
-            df_keywords = pd.DataFrame({"keyword": parse_keywords_from_text(command.get("text",""))})
+            keywords_list = parse_keywords_from_text(command.get("text", ""))
 
-        if df_keywords.empty:
-            respond(text="⚠️ No valid keywords found in your input.")
+        if not keywords_list:
+            respond(text="⚠️ No valid keywords found.")
             return
 
-        raw_keywords = df_keywords["keyword"].tolist()
-        raw_keywords = df_keywords["keyword"].tolist()
-       
-
-        cleaned = clean_keywords(raw_keywords)
+        # Pipeline
+        cleaned = clean_keywords(keywords_list)
         clusters = cluster_keywords(cleaned)
         outlines = fetch_top_results(clusters)
         ideas = generate_post_idea(clusters)
-        
         pdf_path = generate_pdf_report(
-            raw_keywords=raw_keywords,
+            raw_keywords=keywords_list,
             cleaned=cleaned,
             clusters=clusters,
             outlines=outlines,
             ideas=ideas
-            )
+        )
 
+        # Respond in Slack
         respond(blocks=[
-            {"type": "section", "text": {"type": "mrkdwn", "text": "*Keyword Processing Completed ✅*"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "*✅ Keyword Processing Completed*"}},
             {"type": "divider"},
             {"type": "section", "text": {"type": "mrkdwn", "text": f"📦 *Cleaned Keywords:* {len(cleaned)}"}},
             {"type": "section", "text": {"type": "mrkdwn", "text": f"🔹 *Clusters Formed:* {len(clusters)}"}},
@@ -108,144 +94,101 @@ def process_keywords_async(command, respond, file_content=None):
             {"type": "section", "text": {"type": "mrkdwn", "text": f"📄 PDF report has been sent to your DM."}}
         ])
 
-        # Upload PDF to DM
+        # Upload PDF to user DM
         dm_response = slack_app.client.conversations_open(users=command["user_id"])
         dm_channel_id = dm_response["channel"]["id"]
         with open(pdf_path, "rb") as f:
             slack_app.client.files_upload_v2(
                 channel=dm_channel_id,
                 file=f,
-                filename="report.pdf",
+                filename="content_pipeline_report.pdf",
                 title="Content Pipeline Report"
             )
-        user_email = get_user_email(command["user_id"])
+
+        # Send PDF via email (optional)
+        user_email = get_user_email(slack_app, command["user_id"])
         if user_email:
-            user_info = slack_app.client.users_info(user=command["user_id"])
-            user_name = user_info["user"]["real_name"] if user_info["ok"] else "User"
-            
-            email_sent = send_pdf_via_email(user_email, pdf_path, user_name)
+            email_sent = send_pdf_via_email(user_email, pdf_path, "User")
             if email_sent:
                 slack_app.client.chat_postMessage(
                     channel=dm_channel_id,
                     text=f"📧 Report also sent to your email: {user_email}"
                 )
-        else:
-            slack_app.client.chat_postMessage(
-                channel=dm_channel_id,
-                text="📧 Could not retrieve your email address from Slack profile."
-            )
-    except Exception as e:
-        respond(text=f"❌ Something went wrong while processing your keywords:\n```{e}```")
-
-
-@slack_app.command("/keywords")
-def handle_keywords(ack, respond, command):
-    ack("✅ Received your keywords. Processing in background...")
-    file_content = None
-    if "files" in command and command["files"]:
-        file_id = command["files"][0]["id"]
-        result = slack_app.client.files_info(file=file_id)
-        url_private = result["file"]["url_private_download"]
-        headers = {"Authorization": f"Bearer {os.environ['SLACK_BOT_TOKEN']}"}
-        r = requests.get(url_private, headers=headers)
-        file_content = r.content
-
-    threading.Thread(target=process_keywords_async, args=(command, respond, file_content)).start()
-
-
-@slack_app.event("file_shared")
-@slack_app.event("file_shared")
-def handle_file_shared(event, say):
-    try:
-        file_id = event["file"]["id"]
-        file_info = slack_app.client.files_info(file=file_id)
-        file_url = file_info["file"]["url_private_download"]
-        user_id = file_info["file"]["user"]  
-
-        headers = {"Authorization": f"Bearer {os.environ['SLACK_BOT_TOKEN']}"}
-        response = requests.get(file_url, headers=headers)
-
-        if response.status_code == 200:
-            df_keywords = pd.DataFrame({
-                "keyword": parse_keywords_from_text(response.content.decode("utf-8", errors="ignore"))
-            })
-            if df_keywords.empty:
-                say("⚠️ No valid keywords found in the uploaded file.")
-                return
-
-            raw_keywords = df_keywords["keyword"].tolist()
-            cleaned = clean_keywords(raw_keywords)
-            clusters = cluster_keywords(cleaned)
-            outlines = fetch_top_results(clusters)
-            ideas = generate_post_idea(clusters)
-            pdf_path = generate_pdf_report(raw_keywords, cleaned, clusters, outlines, ideas)
-
-            # 🟢 Public confirmation message
-            say(f"✅ CSV processed successfully with {len(cleaned)} keywords!\n📩 Report sent privately to <@{user_id}>.")
-
-            # 🟢 DM the user their PDF report
-            user_id = event["user_id"]
-            dm = slack_app.client.conversations_open(users=user_id)
-            dm_channel = dm["channel"]["id"]
-
-            with open(pdf_path, "rb") as f:
-                slack_app.client.files_upload_v2(
-                    channel=dm_channel,
-                    file=f,
-                    filename="content_pipeline_report.pdf",
-                    title="Content Pipeline Report",
-                    initial_comment=":page_facing_up: Here’s your content pipeline report 📊"
-                )
-
-        else:
-            say("❌ Failed to download the file from Slack servers.")
 
     except Exception as e:
-        say(f"⚠️ Error processing uploaded file: {e}")
+        respond(text=f"❌ Something went wrong:\n```{e}```")
 
 
-
-# Plain text message handler
-@slack_app.event("message")
-def handle_keyword_messages(event, say):
-    try:
-        text = event.get("text", "")
-        user_id = event.get("user", "")
-        channel_id = event.get("channel", "")
-
-        if "bot_id" in event:
-            return
-
-        if text.lower().startswith("keyword"):
-            command_like = {"user_id": user_id, "text": text}
-
-            def send_message(channel_id, text=None, blocks=None):
-                slack_app.client.chat_postMessage(channel=channel_id, text=text or " ", blocks=blocks)
-
-            threading.Thread(
-                target=process_keywords_async,
-                args=(command_like, lambda **kwargs: send_message(channel_id, **kwargs), None)
-            ).start()
-
-            df_keywords = pd.DataFrame({"keyword": parse_keywords_from_text(text)})
-            say(channel=channel_id, text=f"✅ Received {len(df_keywords)} keywords. Processing in background...")
-
-    except Exception as e:
-        say(channel=channel_id, text=f"❌ Something went wrong: {e}")
-
-
-
-def get_user_email(user_id):
+def get_user_email(slack_app, user_id):
     """
-    Get user's email address from Slack
+    Retrieve email of a Slack user
     """
     try:
         response = slack_app.client.users_info(user=user_id)
         if response["ok"]:
-            user_profile = response["user"]["profile"]
-            return user_profile.get("email")
+            return response["user"]["profile"].get("email")
     except Exception as e:
-        print(f"Error getting user email: {e}")
+        print(f"Error retrieving user email: {e}")
     return None
 
 
+def register_handlers(slack_app):
+    """
+    Register all Slack event handlers
+    """
+
+    # Respond to app mentions
+    @slack_app.event("app_mention")
+    def mention_handler(body, say):
+        user = body["event"]["user"]
+        say(f"Hello <@{user}>! I'm running on Render!")
+
+    # Handle plain "keyword ..." messages
+    @slack_app.event("message")
+    def handle_keyword_messages(event, say):
+        try:
+            text = event.get("text", "")
+            user_id = event.get("user")
+            channel_id = event.get("channel")
+
+            # Ignore bot messages
+            if "bot_id" in event:
+                return
+
+            if text.lower().startswith("keyword"):
+                say(f"✅ Received keywords. Processing...")
+                command_like = {"user_id": user_id, "text": text}
+
+                threading.Thread(
+                    target=process_keywords_async,
+                    args=(command_like, lambda **kwargs: slack_app.client.chat_postMessage(channel=channel_id, **kwargs), slack_app)
+                ).start()
+
+        except Exception as e:
+            say(f"❌ Error: {e}")
+
+    # Handle file uploads
+    @slack_app.event("file_shared")
+    def handle_file_shared(event, say):
+        try:
+            file_id = event["file"]["id"]
+            file_info = slack_app.client.files_info(file=file_id)
+            file_url = file_info["file"]["url_private_download"]
+            user_id = file_info["file"]["user"]
+
+            headers = {"Authorization": f"Bearer {slack_app.client.token}"}
+            r = requests.get(file_url, headers=headers)
+
+            if r.status_code == 200:
+                file_content = r.content
+                command_like = {"user_id": user_id, "text": ""}
+                threading.Thread(
+                    target=process_keywords_async,
+                    args=(command_like, lambda **kwargs: slack_app.client.chat_postMessage(channel=user_id, **kwargs), slack_app, file_content)
+                ).start()
+                say(f"✅ File received. Processing keywords in background...")
+            else:
+                say("❌ Failed to download the file from Slack servers.")
+
+        except Exception as e:
+            say(f"⚠️ Error processing uploaded file: {e}")
