@@ -1,8 +1,11 @@
-# run_bot.py
+# main.py
 import os
 from fastapi import FastAPI, Request
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 from app.slack_app import slack_app
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
 
 app = FastAPI()
 handler = SlackRequestHandler(slack_app)
@@ -14,3 +17,13 @@ def home():
 @app.post("/slack/events")
 async def slack_events(req: Request):
     return await handler.handle(req)
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+# Only run for local development
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))  
+    uvicorn.run(app, host="0.0.0.0", port=port)
