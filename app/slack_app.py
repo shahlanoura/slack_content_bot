@@ -3,6 +3,7 @@ import ast
 import requests
 from fastapi import FastAPI, Request, BackgroundTasks
 from slack_bolt import App
+import os
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 from app.pipeline import (
     clean_keywords,
@@ -14,7 +15,13 @@ from app.pipeline import (
 from app.email_service import send_pdf_via_email
 
 # Initialize Slack Bolt App
-slack_app = App(token="YOUR_SLACK_BOT_TOKEN")
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
+SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
+
+if not SLACK_BOT_TOKEN or not SLACK_SIGNING_SECRET:
+    raise ValueError("Slack tokens not found in environment variables.")
+
+slack_app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
 app = FastAPI()
 handler = SlackRequestHandler(slack_app)
 
