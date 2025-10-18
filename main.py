@@ -1,28 +1,28 @@
 # main.py
-from fastapi import FastAPI, Request
-from slack_bolt.adapter.fastapi import SlackRequestHandler
-from slack_bolt import App
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 from slack_bolt import App
-
-slack_app = App(token=os.getenv("SLACK_BOT_TOKEN"), signing_secret=os.getenv("SLACK_SIGNING_SECRET"))
+from slack_bolt.adapter.socket_mode import SocketModeHandler
 from app.slack_app import register_handlers
+
+# Load environment variables (Render automatically sets these)
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
+SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
+SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")  # For Socket Mode
+
+if not SLACK_BOT_TOKEN or not SLACK_SIGNING_SECRET or not SLACK_APP_TOKEN:
+    raise ValueError(
+        "⚠️ Slack tokens not found in environment. Make sure SLACK_BOT_TOKEN, "
+        "SLACK_SIGNING_SECRET, and SLACK_APP_TOKEN are set."
+    )
+
+# Initialize Slack App
+slack_app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
+
+# Register your event handlers
 register_handlers(slack_app)
 
-app = FastAPI()
-handler = SlackRequestHandler(slack_app)
-
-@app.get("/")
-def root():
-    return {"status": "Slack Content Bot is live on Render!"}
-
-@app.post("/slack/events")
-async def slack_events(req: Request):
-    return await handler.handle(req)
+# Start Socket Mode (avoids HTTP public URL issues on Render)
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 10000))  # Render provides this
-    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
+    print("🚀 Slack Content Bot is starting in Socket Mode...")
+    handler = SocketModeHandler(slack_app, SLACK_APP_TOKEN)
+    handler.start()
