@@ -1,9 +1,9 @@
-# main.py - Clean version without Socket Mode
+# main.py (now in root directory)
 import os
 from fastapi import FastAPI, Request
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 
-# Import your Slack app
+# Import from app folder
 from app.slack_app import slack_app
 
 app = FastAPI()
@@ -21,10 +21,11 @@ async def slack_events(req: Request):
 def health_check():
     return {"status": "healthy"}
 
-# No Socket Mode code here!
-
 # Only run for local development
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+    
