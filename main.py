@@ -1,6 +1,6 @@
 # main.py
 import os
-import threading
+import asyncio
 from fastapi import FastAPI, Request
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 
@@ -23,23 +23,24 @@ async def slack_events(req: Request):
 def health_check():
     return {"status": "healthy"}
 
-# Start Socket Mode in background thread
-def start_socket_mode():
+# Async function to start Socket Mode
+async def start_socket_mode():
     try:
         print("🔄 Starting Socket Mode connection...")
-        socket_handler = SocketModeHandler(slack_app, os.environ["SLACK_APP_TOKEN"])
-        socket_handler.start()
-        print("✅ Socket Mode connected successfully!")
+        if os.environ.get("SLACK_APP_TOKEN"):
+            socket_handler = SocketModeHandler(slack_app, os.environ["SLACK_APP_TOKEN"])
+            # Start in background without blocking
+            await socket_handler.start_async()
+            print("✅ Socket Mode connected successfully!")
+        else:
+            print("⚠️ SLACK_APP_TOKEN not found")
     except Exception as e:
         print(f"❌ Socket Mode failed: {e}")
 
-# Start socket mode when app loads
-if os.environ.get("SLACK_APP_TOKEN"):
-    print("🚀 Initializing Socket Mode...")
-    socket_thread = threading.Thread(target=start_socket_mode, daemon=True)
-    socket_thread.start()
-else:
-    print("⚠️ SLACK_APP_TOKEN not found - Socket Mode disabled")
+# Start socket mode when app starts
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(start_socket_mode())
 
 # Only run for local development
 if __name__ == "__main__":
