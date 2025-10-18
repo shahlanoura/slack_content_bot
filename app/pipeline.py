@@ -173,7 +173,7 @@ def fetch_top_results(clusters, top_n_results=3):
 
 # PDF report generation
 def generate_pdf_report(raw_keywords, cleaned, clusters, outlines, ideas):
-    path = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
+    path = os.path.join(os.getcwd(), "report.pdf")
     c = canvas.Canvas(path, pagesize=A4)
     width, height = A4
 
