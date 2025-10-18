@@ -25,3 +25,7 @@ def root():
 @app.post("/slack/events")
 async def slack_events(req: Request):
     return await handler.handle(req)
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 10000))  # Render provides this
+    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
