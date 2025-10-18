@@ -1,22 +1,22 @@
-# main.py
 import os
+from fastapi import FastAPI
+from slack_bolt.adapter.fastapi import SlackRequestHandler
 from slack_bolt import App
-from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-# Slack tokens
-SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
-SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
+# Slack Bolt App
+slack_app = App(token=os.environ["SLACK_BOT_TOKEN"], signing_secret=os.environ["SLACK_SIGNING_SECRET"])
+app = FastAPI()
+handler = SlackRequestHandler(slack_app)
 
-if not SLACK_BOT_TOKEN or not SLACK_APP_TOKEN:
-    raise ValueError("Slack tokens not set in environment variables")
+@app.post("/slack/events")
+async def slack_events(req):
+    return await handler.handle(req)
 
-app = App(token=SLACK_BOT_TOKEN)
+@app.get("/")
+def root():
+    return {"message": "Slack bot is running!"}
 
-# Example event handler
-@app.event("app_mention")
-def mention_handler(event, say):
-    say(f"Hello <@{event['user']}>!")
-
-# Run Socket Mode directly (no HTTP server needed)
 if __name__ == "__main__":
-    SocketModeHandler(app, SLACK_APP_TOKEN).start()
+    port = int(os.environ.get("PORT", 8000))  # Render provides this PORT variable
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=port)
