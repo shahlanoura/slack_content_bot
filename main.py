@@ -22,7 +22,8 @@ def run_slack_bot():
 
 threading.Thread(target=run_slack_bot, daemon=True).start()
 
-# Start FastAPI server for Render to detect a port
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))  # Render sets PORT automatically
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    import uvicorn
+    uvicorn.run("app.slack_app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
+    
