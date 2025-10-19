@@ -1,9 +1,10 @@
-# slack_app.py
+# app/slack_app.py
+import os
 import ast
 import requests
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request,BackgroundTasks
+import threading
 from slack_bolt import App
-import os
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 from app.pipeline import (
     clean_keywords,
@@ -14,41 +15,39 @@ from app.pipeline import (
 )
 from app.email_service import send_pdf_via_email
 
-# Initialize Slack Bolt App
+#  Initialize Slack Bolt App 
+
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 
 if not SLACK_BOT_TOKEN or not SLACK_SIGNING_SECRET:
     raise ValueError("Slack tokens not found in environment variables.")
 
+# ✅ Define App before decorators
 slack_app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
+
+# FastAPI setup
 app = FastAPI()
 handler = SlackRequestHandler(slack_app)
 
-# ------------------- Helpers -------------------
+# Helpers 
 
 def parse_keywords_from_text(raw_text):
     if not raw_text:
         return []
-
     text = raw_text.strip()
     if text.lower().startswith("keyword"):
         text = text[len("keyword"):].strip()
-
     try:
         if text.startswith("[") and text.endswith("]"):
             lst = ast.literal_eval(text)
             if isinstance(lst, list):
-                keywords = [str(x).strip() for x in lst if str(x).strip()]
-                return list(dict.fromkeys(keywords))
+                return [str(x).strip() for x in lst if str(x).strip()]
     except Exception:
         pass
-
     text = text.replace("\r", "\n").replace(",", "\n")
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    keywords = [kw for kw in lines if kw.lower() != "keyword"]
-
-    return list(dict.fromkeys(keywords))
+    return list(dict.fromkeys(lines))
 
 def get_user_email(slack_app, user_id):
     try:
@@ -59,7 +58,7 @@ def get_user_email(slack_app, user_id):
         print(f"[Email Fetch Error] {e}")
     return None
 
-# ------------------- Main Processing -------------------
+#  Main Processing 
 
 def process_keywords_async(command, slack_app, channel_id=None):
     try:
@@ -67,7 +66,6 @@ def process_keywords_async(command, slack_app, channel_id=None):
         text = command.get("text", "")
         user_id = command.get("user_id")
 
-        # Parse keywords
         keywords_list = parse_keywords_from_text(text)
         if not keywords_list:
             slack_app.client.chat_postMessage(
@@ -75,15 +73,15 @@ def process_keywords_async(command, slack_app, channel_id=None):
                 text="⚠️ No valid keywords found."
             )
             return
+
         print(f"🔹 Keywords parsed: {keywords_list}")
 
-        # Pipeline
         cleaned = clean_keywords(keywords_list)
         clusters = cluster_keywords(cleaned)
         outlines = fetch_top_results(clusters)
         ideas = generate_post_idea(clusters)
-        print("🔹 Pipeline complete. Generating PDF...")
 
+        print("🔹 Pipeline complete. Generating PDF...")
         pdf_path = generate_pdf_report(
             raw_keywords=keywords_list,
             cleaned=cleaned,
@@ -93,13 +91,11 @@ def process_keywords_async(command, slack_app, channel_id=None):
         )
         print(f"🔹 PDF generated at {pdf_path}")
 
-        # Respond in Slack
         slack_app.client.chat_postMessage(
             channel=channel_id or user_id,
             text=f"✅ Keyword processing completed! PDF report will be uploaded shortly."
         )
 
-        # Upload PDF to DM
         dm_response = slack_app.client.conversations_open(users=user_id)
         dm_channel_id = dm_response["channel"]["id"]
         with open(pdf_path, "rb") as f:
@@ -109,9 +105,9 @@ def process_keywords_async(command, slack_app, channel_id=None):
                 filename="content_pipeline_report.pdf",
                 title="Content Pipeline Report"
             )
+
         print("🔹 PDF uploaded to Slack DM")
 
-        # Optional: send email
         user_email = get_user_email(slack_app, user_id)
         if user_email:
             if send_pdf_via_email(user_email, pdf_path, "User"):
@@ -119,7 +115,6 @@ def process_keywords_async(command, slack_app, channel_id=None):
                     channel=dm_channel_id,
                     text=f"📧 Report also sent to your email: {user_email}"
                 )
-                print(f"🔹 PDF sent to email: {user_email}")
 
     except Exception as e:
         print(f"[Processing Error] {e}")
@@ -128,12 +123,13 @@ def process_keywords_async(command, slack_app, channel_id=None):
             text=f"❌ Something went wrong:\n```{e}```"
         )
 
-# ------------------- Slack Event Handlers -------------------
+# Slack Event Handler
 
 @slack_app.event("app_mention")
 def handle_app_mention(body, say):
     user = body["event"]["user"]
-    say(f"Hello <@{user}>! I'm running on Render!")
+    say(f"Hello <@{user}>! I'm running on Render! 🚀")
+
 
 @slack_app.event("message")
 def handle_keyword_messages(event, say):
@@ -145,12 +141,15 @@ def handle_keyword_messages(event, say):
         return
 
     if text.lower().startswith("keyword"):
-        say(f"✅ Received keywords. Processing...")
+        say("✅ Received keywords. Processing...")
         command_like = {"user_id": user_id, "text": text}
-        # Use background task instead of threading
-        from fastapi import BackgroundTasks
-        background_tasks = BackgroundTasks()
-        background_tasks.add_task(process_keywords_async, command_like, slack_app, channel_id)
+
+        threading.Thread(
+            target=process_keywords_async,
+            args=(command_like, slack_app, channel_id),
+            daemon=True
+        ).start()
+
 
 @slack_app.event("file_shared")
 def handle_file_shared(event, say):
@@ -163,23 +162,20 @@ def handle_file_shared(event, say):
         headers = {"Authorization": f"Bearer {slack_app.client.token}"}
         r = requests.get(file_url, headers=headers)
         if r.status_code == 200:
-            file_content = r.content
+            say("✅ File received. Processing in background...")
             command_like = {"user_id": user_id, "text": ""}
-            from fastapi import BackgroundTasks
-            background_tasks = BackgroundTasks()
-            background_tasks.add_task(
-                process_keywords_async,
-                command_like,
-                slack_app,
-                user_id
-            )
-            say(f"✅ File received. Processing keywords in background...")
+            threading.Thread(
+                target=process_keywords_async,
+                args=(command_like, slack_app, user_id),
+                daemon=True
+            ).start()
         else:
-            say("❌ Failed to download the file from Slack servers.")
+            say("❌ Failed to download the file.")
     except Exception as e:
         say(f"⚠️ Error processing uploaded file: {e}")
 
-# ------------------- FastAPI Endpoint -------------------
+
+# FastAPI Endpoint 
 
 @app.post("/slack/events")
 async def endpoint(req: Request):
