@@ -34,10 +34,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ---------------------- App Initialization ----------------------
-# Initialize FastAPI app FIRST
+# Initialize FastAPI app
 app = FastAPI(title="Slack Content Bot", version="1.0.0")
 
-# Then initialize Slack app
+# Initialize Slack app
 slack_app = App(
     token=SLACK_BOT_TOKEN,
     signing_secret=SLACK_SIGNING_SECRET,
@@ -65,13 +65,7 @@ async def slack_events_endpoint(request: Request):
 
 # ---------------------- Helper Functions ----------------------
 def parse_keywords_from_text(raw_text: str) -> list:
-    """
-    Parse keywords from various input formats:
-    - List format: [keyword1, keyword2]
-    - Plain text with 'keyword' prefix
-    - CSV-like format
-    - Line-separated format
-    """
+    """Parse keywords from various input formats"""
     if not raw_text:
         return []
     
@@ -167,9 +161,7 @@ def extract_text_from_file(file_info: dict) -> str:
 
 # ---------------------- Main Processing Function ----------------------
 def process_keywords_async(command: dict, channel_id: str = None):
-    """
-    Main keyword processing pipeline - runs in background thread
-    """
+    """Main keyword processing pipeline - runs in background thread"""
     user_id = command.get("user_id")
     text = command.get("text", "")
     
@@ -183,7 +175,7 @@ def process_keywords_async(command: dict, channel_id: str = None):
         if not keywords_list:
             slack_app.client.chat_postMessage(
                 channel=channel_id or user_id,
-                text="⚠️ No valid keywords found in your input. Please provide keywords in one of these formats:\n• `keyword\\nkw1\\nkw2`\n• `[kw1, kw2, kw3]`\n• Upload a CSV/PDF file"
+                text="⚠️ No valid keywords found in your input."
             )
             return
         
@@ -255,14 +247,12 @@ def process_keywords_async(command: dict, channel_id: str = None):
                     text=f"📧 Report also sent to your email: {user_email}"
                 )
                 logger.info("🔹 Step 13: Email sent successfully")
-            else:
-                logger.warning(f"Failed to send email to {user_email}")
         
         logger.info("🎉 Keyword processing completed successfully")
         
     except Exception as e:
         logger.error(f"❌ Error in keyword processing: {e}")
-        error_message = f"❌ Sorry, I encountered an error while processing your keywords:\n```{str(e)}```"
+        error_message = f"❌ Sorry, I encountered an error while processing your keywords."
         
         try:
             slack_app.client.chat_postMessage(
@@ -279,12 +269,12 @@ def handle_app_mention(body, say, logger):
     try:
         event = body["event"]
         user = event["user"]
-        text = event.get("text", "")
         
-        logger.info(f"Bot mentioned by user {user}: {text}")
+        logger.info(f"Bot mentioned by user {user}")
     except Exception as slack_error:
-            logger.error(f"Failed to send error message to Slack: {slack_error}")  
-            help_text = f"""
+            logger.error(f"Failed to send error message to Slack: {slack_error}")
+   
+    help_text = f"""
 Hello <@{user}>! 👋 I'm your Content Pipeline Bot!
 
 Here's how to use me:
