@@ -38,10 +38,13 @@ threading.Thread(target=run_slack_bot, daemon=True).start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))  # Render expects this
     print(f"🌐 Starting FastAPI server on port {port} (Render will check this port)...")
-
+    t = threading.Thread(target=run_slack_bot, daemon=True)
+    t.start()
     uvicorn.run(
-        "app.slack_app:app",  # import path for your FastAPI app
+        "app.slack_app:app",  
         host="0.0.0.0",
-        port=port,
-        reload=False
+        port=port
     )
+
+
+
