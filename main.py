@@ -1,61 +1,33 @@
 # main.py
 import os
 import uvicorn
-from app.slack_app import app, slack_app  # Import both apps
+from app.slack_app import app, slack_app
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+import threading
 
-# -----------------------------
 # Load environment variables
-# -----------------------------
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
-PORT = int(os.environ.get("PORT", 10000))
 
 if not all([SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, SLACK_APP_TOKEN]):
-    raise ValueError("⚠️ Missing Slack tokens in environment variables")
+    raise ValueError("Missing Slack tokens")
 
-# -----------------------------
-# Start Slack Socket Mode
-# -----------------------------
-def start_slack_handler():
-    """Start Slack Socket Mode in background"""
+def start_socket_handler():
+    """Start Slack Socket Mode"""
     try:
-        print("⚡️ Starting Slack Socket Mode handler...")
+        print("⚡️ Starting Slack Socket Mode...")
         handler = SocketModeHandler(slack_app, SLACK_APP_TOKEN)
         handler.start()
     except Exception as e:
-        print(f"❌ Failed to start Slack handler: {e}")
+        print(f"Error starting Socket Mode: {e}")
 
-# -----------------------------
-# FastAPI Routes
-# -----------------------------
-@app.get("/")
-def home():
-    return {"status": "Slack Content Bot is live on Render!"}
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-# -----------------------------
-# Main execution
-# -----------------------------
 if __name__ == "__main__":
-    print(f"🚀 Starting application on port {PORT}")
+    port = int(os.environ.get("PORT", 10000))
     
-    # Start Slack handler
-    import threading
-    slack_thread = threading.Thread(target=start_slack_handler, daemon=True)
-    slack_thread.start()
+    # Start Socket Mode in background thread
+    socket_thread = threading.Thread(target=start_socket_handler, daemon=True)
+    socket_thread.start()
     
-    print("✅ Slack handler started in background")
-    print("🌐 Starting FastAPI server...")
-    
-    # Start FastAPI
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=PORT,
-        log_level="info"
-    )
+    print(f"🚀 Starting FastAPI server on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)

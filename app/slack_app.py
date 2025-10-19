@@ -272,8 +272,7 @@ def handle_app_mention(body, say, logger):
         
         logger.info(f"Bot mentioned by user {user}")
     except Exception as slack_error:
-            logger.error(f"Failed to send error message to Slack: {slack_error}")
-   
+            logger.error(f"Failed to send error message to Slack: {slack_error}")   
     help_text = f"""
 Hello <@{user}>! 👋 I'm your Content Pipeline Bot!
 
