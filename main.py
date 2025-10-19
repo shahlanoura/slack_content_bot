@@ -5,30 +5,43 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 from app.slack_app import slack_app, app  # import FastAPI app
 import uvicorn
 
+# ------------------------------
 # Load environment variables
+# ------------------------------
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
 
-if not SLACK_BOT_TOKEN or not SLACK_SIGNING_SECRET or not SLACK_APP_TOKEN:
+if not all([SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, SLACK_APP_TOKEN]):
     raise ValueError(
-        "⚠️ Slack tokens not found in environment. Make sure SLACK_BOT_TOKEN, "
+        "⚠️ Missing Slack tokens. Make sure SLACK_BOT_TOKEN, "
         "SLACK_SIGNING_SECRET, and SLACK_APP_TOKEN are set."
     )
 
+
 # ------------------------------
-# Start Slack Socket Mode in a background thread
+# Start Slack Socket Mode in background thread
 # ------------------------------
 def run_slack_bot():
-    print("⚡️ Starting Slack Socket Mode bot...")
-    SocketModeHandler(slack_app, SLACK_APP_TOKEN).start()
+    print("⚡ Starting Slack Socket Mode bot...")
+    handler = SocketModeHandler(slack_app, SLACK_APP_TOKEN)
+    handler.start()
 
+
+# Start the Slack thread before running FastAPI
 threading.Thread(target=run_slack_bot, daemon=True).start()
 
+
 # ------------------------------
-# Run FastAPI on Render port
+# Run FastAPI on Render-compatible port
 # ------------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🌐 Starting FastAPI server on port {port} for Render health checks...")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 10000))  # Render expects this
+    print(f"🌐 Starting FastAPI server on port {port} (Render will check this port)...")
+
+    uvicorn.run(
+        "app.slack_app:app",  # import path for your FastAPI app
+        host="0.0.0.0",
+        port=port,
+        reload=False
+    )
