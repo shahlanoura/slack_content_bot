@@ -2,8 +2,17 @@ services:
   - type: web
     name: slack-content-bot
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    pythonVersion: "3.10"        # Force Python 3.10 for stability
+    buildCommand: |
+      python -m pip install --upgrade pip setuptools wheel
+      pip install --no-cache-dir -r requirements.txt --timeout 120
+    startCommand: python main.py
     envVars:
       - key: PORT
-        value: 8000
+        value: 10000              # Match the port in your code
+      - key: SLACK_BOT_TOKEN
+        
+      - key: SLACK_SIGNING_SECRET
+        
+      - key: SLACK_APP_TOKEN
+        
