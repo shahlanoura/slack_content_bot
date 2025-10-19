@@ -4,6 +4,9 @@ import ast
 import requests
 from fastapi import FastAPI, Request,BackgroundTasks
 import threading
+import io
+import csv
+from PyPDF2 import PdfReader
 from slack_bolt import App
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 from app.pipeline import (
@@ -155,26 +158,67 @@ def handle_keyword_messages(event, say):
 def handle_file_shared(event, say):
     try:
         file_id = event["file"]["id"]
-        file_info = slack_app.client.files_info(file=file_id)
-        file_url = file_info["file"]["url_private_download"]
-        user_id = file_info["file"]["user"]
+        file_info = slack_app.client.files_info(file=file_id)["file"]
+        file_url = file_info["url_private_download"]
+        user_id = file_info["user"]
+        mimetype = file_info.get("mimetype", "")
 
-        headers = {"Authorization": f"Bearer {os.environ['SLACK_BOT_TOKEN']}"}
+        headers = {"Authorization": f"Bearer {slack_app.client.token}"}
         r = requests.get(file_url, headers=headers)
-        if r.status_code == 200:
-            content = r.content.decode("utf-8")  # convert bytes to string
-            say("✅ File received. Processing in background...")
-            command_like = {"user_id": user_id, "text": content}  # pass file content
-            threading.Thread(
-                target=process_keywords_async,
-                args=(command_like, slack_app, user_id),
-                daemon=True
-            ).start()
-        else:
+        if r.status_code != 200:
             say("❌ Failed to download the file.")
+            return
+
+        # ----------------- Extract text -----------------
+        file_text = ""
+        if "csv" in mimetype:
+            # CSV parsing
+            try:
+                decoded = r.content.decode("utf-8")
+                reader = csv.reader(io.StringIO(decoded))
+                for row in reader:
+                    for cell in row:
+                        if cell.strip().lower() != "keyword":
+                            file_text += cell.strip() + "\n"
+            except Exception as e:
+                say(f"⚠️ Failed to parse CSV: {e}")
+                return
+
+        elif "pdf" in mimetype:
+            # PDF parsing
+            try:
+                reader = PdfReader(io.BytesIO(r.content))
+                for page in reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        file_text += page_text + "\n"
+            except Exception as e:
+                say(f"⚠️ Failed to parse PDF: {e}")
+                return
+
+        else:
+            # Fallback for plain text files
+            try:
+                file_text = r.text
+            except Exception as e:
+                say(f"⚠️ Failed to read file: {e}")
+                return
+
+        if not file_text.strip():
+            say("⚠️ No text found in the uploaded file.")
+            return
+
+        say("✅ File received. Processing in background...")
+
+        command_like = {"user_id": user_id, "text": file_text}
+        threading.Thread(
+            target=process_keywords_async,
+            args=(command_like, slack_app, user_id),
+            daemon=True
+        ).start()
+
     except Exception as e:
         say(f"⚠️ Error processing uploaded file: {e}")
-
 
 
 # FastAPI Endpoint 
