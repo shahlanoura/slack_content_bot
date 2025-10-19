@@ -1,4 +1,3 @@
-# pipeline.py
 import re
 import os
 import random
@@ -14,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
 
-# ------------------- Keyword Cleaning -------------------
+# Keyword Cleaning
 def clean_keywords(raw_keywords):
     cleaned = []
     seen = set()
@@ -32,7 +31,7 @@ def clean_keywords(raw_keywords):
             cleaned.append(kw)
     return cleaned
 
-# ------------------- Keyword Clustering -------------------
+#  Keyword Clustering 
 def cluster_keywords(cleaned_keywords):
     if len(cleaned_keywords) < 2:
         return [{"cluster_name": "Misc", "keywords": cleaned_keywords}]
@@ -45,7 +44,7 @@ def cluster_keywords(cleaned_keywords):
         clusters.setdefault(label, []).append(kw)
     return [{"cluster_name": f"Cluster {i+1}", "keywords": kws} for i, kws in enumerate(clusters.values())]
 
-# ------------------- Post Idea Generation -------------------
+# Post Idea Generation 
 def generate_post_idea(clusters):
     ideas = []
     for cluster in clusters:
@@ -59,7 +58,7 @@ def generate_post_idea(clusters):
         ideas.append({"cluster": cluster["cluster_name"], "idea": idea})
     return ideas
 
-# ------------------- Fetch & Parse -------------------
+# Fetch & Parse 
 def extract_headings(url):
     try:
         r = requests.get(url, timeout=5, headers={'User-Agent':'Mozilla/5.0'})
@@ -95,7 +94,7 @@ def fetch_top_search(keyword, top_n=3):
         print(f"[fetch_top_search] Error for '{keyword}': {e}")
         return []
 
-# ------------------- Fetch Top Results -------------------
+#  Fetch Top Results 
 def fetch_top_results(clusters, top_n_results=3):
     outlines = []
 
@@ -118,9 +117,9 @@ def fetch_top_results(clusters, top_n_results=3):
 
     return outlines
 
-# ------------------- PDF Generation -------------------
+# PDF Generation 
 def generate_pdf_report(raw_keywords, cleaned, clusters, outlines, ideas):
-    path = os.path.join(os.getcwd(), "report.pdf")
+    path = os.path.join("\temp", "report.pdf")
     c = canvas.Canvas(path, pagesize=A4)
     width, height = A4
 
@@ -186,3 +185,4 @@ def generate_pdf_report(raw_keywords, cleaned, clusters, outlines, ideas):
 
     c.save()
     return path
+
