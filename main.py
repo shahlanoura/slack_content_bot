@@ -8,7 +8,7 @@ import uvicorn
 # Load environment variables
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
-SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")  
+SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
 
 if not SLACK_BOT_TOKEN or not SLACK_SIGNING_SECRET or not SLACK_APP_TOKEN:
     raise ValueError(
@@ -16,14 +16,19 @@ if not SLACK_BOT_TOKEN or not SLACK_SIGNING_SECRET or not SLACK_APP_TOKEN:
         "SLACK_SIGNING_SECRET, and SLACK_APP_TOKEN are set."
     )
 
+# ------------------------------
 # Start Slack Socket Mode in a background thread
+# ------------------------------
 def run_slack_bot():
+    print("⚡️ Starting Slack Socket Mode bot...")
     SocketModeHandler(slack_app, SLACK_APP_TOKEN).start()
 
 threading.Thread(target=run_slack_bot, daemon=True).start()
 
+# ------------------------------
+# Run FastAPI on Render port
+# ------------------------------
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.slack_app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-
-    
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Starting FastAPI server on port {port} for Render health checks...")
+    uvicorn.run(app, host="0.0.0.0", port=port)
