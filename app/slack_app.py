@@ -159,11 +159,12 @@ def handle_file_shared(event, say):
         file_url = file_info["file"]["url_private_download"]
         user_id = file_info["file"]["user"]
 
-        headers = {"Authorization": f"Bearer {slack_app.client.token}"}
+        headers = {"Authorization": f"Bearer {os.environ['SLACK_BOT_TOKEN']}"}
         r = requests.get(file_url, headers=headers)
         if r.status_code == 200:
+            content = r.content.decode("utf-8")  # convert bytes to string
             say("✅ File received. Processing in background...")
-            command_like = {"user_id": user_id, "text": ""}
+            command_like = {"user_id": user_id, "text": content}  # pass file content
             threading.Thread(
                 target=process_keywords_async,
                 args=(command_like, slack_app, user_id),
@@ -173,6 +174,7 @@ def handle_file_shared(event, say):
             say("❌ Failed to download the file.")
     except Exception as e:
         say(f"⚠️ Error processing uploaded file: {e}")
+
 
 
 # FastAPI Endpoint 
