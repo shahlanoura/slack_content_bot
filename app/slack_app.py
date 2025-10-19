@@ -157,22 +157,32 @@ def handle_keyword_messages(event, say):
 @slack_app.event("file_shared")
 def handle_file_shared(event, say):
     try:
+        print("📂 Starting CSV/PDF/Text file event handler...")
+
         file_id = event["file"]["id"]
+        print(f"📎 File ID received: {file_id}")
+
         file_info = slack_app.client.files_info(file=file_id)["file"]
         file_url = file_info["url_private_download"]
         user_id = file_info["user"]
         mimetype = file_info.get("mimetype", "")
+        file_name = file_info.get("name", "unknown")
+
+        print(f"✅ Received file: {file_name}")
+        print(f"📄 MIME Type: {mimetype}")
 
         headers = {"Authorization": f"Bearer {slack_app.client.token}"}
         r = requests.get(file_url, headers=headers)
         if r.status_code != 200:
+            print(f"❌ Failed to download file: {r.status_code}")
             say("❌ Failed to download the file.")
             return
+        print("📥 File downloaded successfully.")
 
         # ----------------- Extract text -----------------
         file_text = ""
         if "csv" in mimetype:
-            # CSV parsing
+            print("🧠 Detected CSV file, starting to parse...")
             try:
                 decoded = r.content.decode("utf-8")
                 reader = csv.reader(io.StringIO(decoded))
@@ -180,35 +190,43 @@ def handle_file_shared(event, say):
                     for cell in row:
                         if cell.strip().lower() != "keyword":
                             file_text += cell.strip() + "\n"
+                print("✅ CSV parsing completed successfully.")
             except Exception as e:
+                print(f"⚠️ CSV parsing failed: {e}")
                 say(f"⚠️ Failed to parse CSV: {e}")
                 return
 
         elif "pdf" in mimetype:
-            # PDF parsing
+            print("📘 Detected PDF file, starting to extract text...")
             try:
                 reader = PdfReader(io.BytesIO(r.content))
                 for page in reader.pages:
                     page_text = page.extract_text()
                     if page_text:
                         file_text += page_text + "\n"
+                print("✅ PDF text extraction completed.")
             except Exception as e:
+                print(f"⚠️ PDF parsing failed: {e}")
                 say(f"⚠️ Failed to parse PDF: {e}")
                 return
 
         else:
-            # Fallback for plain text files
+            print("📄 Treating file as plain text.")
             try:
                 file_text = r.text
+                print("✅ Text file read successfully.")
             except Exception as e:
+                print(f"⚠️ Text file read failed: {e}")
                 say(f"⚠️ Failed to read file: {e}")
                 return
 
         if not file_text.strip():
+            print("⚠️ No text content found in file.")
             say("⚠️ No text found in the uploaded file.")
             return
 
         say("✅ File received. Processing in background...")
+        print("🧠 Running keyword clustering and idea generation in background...")
 
         command_like = {"user_id": user_id, "text": file_text}
         threading.Thread(
@@ -217,7 +235,10 @@ def handle_file_shared(event, say):
             daemon=True
         ).start()
 
+        print("🎉 CSV processing thread started successfully!")
+
     except Exception as e:
+        print(f"⚠️ Error in file_shared event handler: {e}")
         say(f"⚠️ Error processing uploaded file: {e}")
 
 
