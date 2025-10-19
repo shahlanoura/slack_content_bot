@@ -1,5 +1,5 @@
 # Core ML
-torch==2.2.2+cpu
+torch==2.9.0
 sentence-transformers==5.1.1
 transformers==4.46.2
 # Web / API
