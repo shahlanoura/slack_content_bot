@@ -251,3 +251,10 @@ async def endpoint(req: Request):
 @app.get("/")
 def home():
     return {"status": "Slack Content Bot is live on Render!"}
+
+from fastapi.responses import JSONResponse
+
+@app.head("/")
+def root_head():
+    return JSONResponse(status_code=200)
+    

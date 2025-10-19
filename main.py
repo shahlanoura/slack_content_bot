@@ -44,11 +44,15 @@ def health():
 # Run FastAPI on Render port
 # -----------------------------
 if __name__ == "__main__":
-    print(f"🌐 Starting FastAPI server on port {PORT} (Render health check)...")
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=PORT,
-        log_level="info",
-        access_log=True
-    )
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Starting FastAPI server on port {port} for Render health checks...")
+
+    # Start Slack bot in a daemon thread AFTER FastAPI starts
+    import threading
+    def run_slack_bot():
+        print("⚡️ Starting Slack Socket Mode bot...")
+        SocketModeHandler(slack_app, SLACK_APP_TOKEN).start()
+    
+    threading.Thread(target=run_slack_bot, daemon=True).start()
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
