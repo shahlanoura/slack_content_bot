@@ -1,12 +1,13 @@
-# app/slack_app.py
 import os
 import ast
 import requests
-from fastapi import FastAPI, Request,BackgroundTasks
 import threading
 import io
 import csv
+import logging
 from PyPDF2 import PdfReader
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from slack_bolt import App
 from slack_bolt.adapter.fastapi import SlackRequestHandler
 from app.pipeline import (
@@ -18,73 +19,198 @@ from app.pipeline import (
 )
 from app.email_service import send_pdf_via_email
 
-#  Initialize Slack Bolt App 
-
+# ---------------------- Configuration ----------------------
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 
 if not SLACK_BOT_TOKEN or not SLACK_SIGNING_SECRET:
     raise ValueError("Slack tokens not found in environment variables.")
 
-# ✅ Define App before decorators
-slack_app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
+# ---------------------- Logging Setup ----------------------
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# FastAPI setup
-app = FastAPI()
+# ---------------------- App Initialization ----------------------
+# Initialize FastAPI app FIRST
+app = FastAPI(title="Slack Content Bot", version="1.0.0")
+
+# Then initialize Slack app
+slack_app = App(
+    token=SLACK_BOT_TOKEN,
+    signing_secret=SLACK_SIGNING_SECRET,
+    logger=logger
+)
+
 handler = SlackRequestHandler(slack_app)
 
-# Helpers 
+# ---------------------- FastAPI Routes ----------------------
+@app.get("/")
+async def root():
+    return {
+        "status": "online", 
+        "service": "Slack Content Pipeline Bot",
+        "version": "1.0.0"
+    }
 
-def parse_keywords_from_text(raw_text):
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "slack-content-bot"}
+
+@app.post("/slack/events")
+async def slack_events_endpoint(request: Request):
+    return await handler.handle(request)
+
+# ---------------------- Helper Functions ----------------------
+def parse_keywords_from_text(raw_text: str) -> list:
+    """
+    Parse keywords from various input formats:
+    - List format: [keyword1, keyword2]
+    - Plain text with 'keyword' prefix
+    - CSV-like format
+    - Line-separated format
+    """
     if not raw_text:
         return []
+    
     text = raw_text.strip()
+    logger.info(f"Parsing keywords from text: {text[:100]}...")
+    
+    # Remove 'keyword' prefix if present
     if text.lower().startswith("keyword"):
         text = text[len("keyword"):].strip()
+    
+    # Try to parse as Python list
     try:
         if text.startswith("[") and text.endswith("]"):
             lst = ast.literal_eval(text)
             if isinstance(lst, list):
-                return [str(x).strip() for x in lst if str(x).strip()]
-    except Exception:
-        pass
+                keywords = [str(x).strip() for x in lst if str(x).strip()]
+                logger.info(f"Parsed as list: {keywords}")
+                return keywords
+    except Exception as e:
+        logger.debug(f"Could not parse as list: {e}")
+    
+    # Parse as text with various separators
     text = text.replace("\r", "\n").replace(",", "\n")
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return list(dict.fromkeys(lines))
+    
+    # Remove empty lines and duplicates while preserving order
+    keywords = list(dict.fromkeys([line for line in lines if line]))
+    logger.info(f"Parsed {len(keywords)} keywords: {keywords}")
+    
+    return keywords
 
-def get_user_email(slack_app, user_id):
+def get_user_email(user_id: str) -> str:
+    """Get user's email from Slack API"""
     try:
+        logger.info(f"Fetching email for user: {user_id}")
         response = slack_app.client.users_info(user=user_id)
         if response["ok"]:
-            return response["user"]["profile"].get("email")
+            email = response["user"]["profile"].get("email")
+            logger.info(f"Found email: {email}")
+            return email
+        else:
+            logger.warning(f"Failed to get user info: {response.get('error')}")
     except Exception as e:
-        print(f"[Email Fetch Error] {e}")
+        logger.error(f"Error fetching user email: {e}")
     return None
 
-#  Main Processing 
-
-def process_keywords_async(command, slack_app, channel_id=None):
+def extract_text_from_file(file_info: dict) -> str:
+    """Extract text from uploaded files (CSV, PDF, TXT)"""
     try:
-        print("🔹 Starting keyword processing...")
-        text = command.get("text", "")
-        user_id = command.get("user_id")
+        file_url = file_info["url_private_download"]
+        mimetype = file_info.get("mimetype", "")
+        filename = file_info.get("name", "")
+        
+        logger.info(f"Processing file: {filename}, type: {mimetype}")
+        
+        # Download file
+        headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+        response = requests.get(file_url, headers=headers)
+        if response.status_code != 200:
+            raise Exception(f"Failed to download file: {response.status_code}")
+        
+        file_text = ""
+        
+        # Process based on file type
+        if "csv" in mimetype or filename.lower().endswith('.csv'):
+            logger.info("Processing CSV file")
+            decoded = response.content.decode("utf-8")
+            reader = csv.reader(io.StringIO(decoded))
+            for row in reader:
+                for cell in row:
+                    cell_clean = cell.strip()
+                    if cell_clean and cell_clean.lower() != "keyword":
+                        file_text += cell_clean + "\n"
+                        
+        elif "pdf" in mimetype or filename.lower().endswith('.pdf'):
+            logger.info("Processing PDF file")
+            reader = PdfReader(io.BytesIO(response.content))
+            for page_num, page in enumerate(reader.pages):
+                page_text = page.extract_text()
+                if page_text:
+                    file_text += f"Page {page_num + 1}:\n{page_text}\n\n"
+                    
+        else:  # Treat as text file
+            logger.info("Processing text file")
+            file_text = response.text
+        
+        logger.info(f"Extracted {len(file_text)} characters from file")
+        return file_text.strip()
+        
+    except Exception as e:
+        logger.error(f"Error extracting text from file: {e}")
+        raise
 
+# ---------------------- Main Processing Function ----------------------
+def process_keywords_async(command: dict, channel_id: str = None):
+    """
+    Main keyword processing pipeline - runs in background thread
+    """
+    user_id = command.get("user_id")
+    text = command.get("text", "")
+    
+    try:
+        logger.info(f"🔹 Step 1: Starting keyword processing for user {user_id}")
+        
+        # Parse keywords
         keywords_list = parse_keywords_from_text(text)
+        logger.info(f"🔹 Step 2: Parsed {len(keywords_list)} keywords: {keywords_list}")
+        
         if not keywords_list:
             slack_app.client.chat_postMessage(
                 channel=channel_id or user_id,
-                text="⚠️ No valid keywords found."
+                text="⚠️ No valid keywords found in your input. Please provide keywords in one of these formats:\n• `keyword\\nkw1\\nkw2`\n• `[kw1, kw2, kw3]`\n• Upload a CSV/PDF file"
             )
             return
-
-        print(f"🔹 Keywords parsed: {keywords_list}")
-
+        
+        # Send initial processing message
+        slack_app.client.chat_postMessage(
+            channel=channel_id or user_id,
+            text=f"🔍 Processing {len(keywords_list)} keywords through the content pipeline..."
+        )
+        
+        # Execute pipeline steps
+        logger.info("🔹 Step 3: Cleaning keywords...")
         cleaned = clean_keywords(keywords_list)
+        logger.info(f"🔹 Cleaned keywords: {cleaned}")
+        
+        logger.info("🔹 Step 4: Clustering keywords...")
         clusters = cluster_keywords(cleaned)
+        logger.info(f"🔹 Created {len(clusters)} clusters")
+        
+        logger.info("🔹 Step 5: Fetching top results...")
         outlines = fetch_top_results(clusters)
+        logger.info(f"🔹 Generated {len(outlines)} outlines")
+        
+        logger.info("🔹 Step 6: Generating post ideas...")
         ideas = generate_post_idea(clusters)
-
-        print("🔹 Pipeline complete. Generating PDF...")
+        logger.info(f"🔹 Generated {len(ideas)} ideas")
+        
+        logger.info("🔹 Step 7: Generating PDF report...")
         pdf_path = generate_pdf_report(
             raw_keywords=keywords_list,
             cleaned=cleaned,
@@ -92,175 +218,76 @@ def process_keywords_async(command, slack_app, channel_id=None):
             outlines=outlines,
             ideas=ideas
         )
-        print(f"🔹 PDF generated at {pdf_path}")
-
+        logger.info(f"🔹 PDF generated at: {pdf_path}")
+        
+        # Send completion message
+        logger.info("🔹 Step 8: Sending completion message...")
         slack_app.client.chat_postMessage(
             channel=channel_id or user_id,
-            text=f"✅ Keyword processing completed! PDF report will be uploaded shortly."
+            text=f"✅ Keyword processing completed! Generated report with {len(clusters)} content clusters."
         )
-
+        
+        # Open DM channel for file upload
+        logger.info("🔹 Step 9: Opening DM channel...")
         dm_response = slack_app.client.conversations_open(users=user_id)
         dm_channel_id = dm_response["channel"]["id"]
+        
+        # Upload PDF to DM
+        logger.info("🔹 Step 10: Uploading PDF to Slack...")
         with open(pdf_path, "rb") as f:
-            slack_app.client.files_upload_v2(
+            upload_result = slack_app.client.files_upload_v2(
                 channel=dm_channel_id,
                 file=f,
                 filename="content_pipeline_report.pdf",
-                title="Content Pipeline Report"
+                title="Content Pipeline Report",
+                initial_comment="Here's your content pipeline report! 📊"
             )
-
-        print("🔹 PDF uploaded to Slack DM")
-
-        user_email = get_user_email(slack_app, user_id)
+        logger.info("🔹 Step 11: PDF uploaded successfully")
+        
+        # Send email if available
+        user_email = get_user_email(user_id)
         if user_email:
-            if send_pdf_via_email(user_email, pdf_path, "User"):
+            logger.info(f"🔹 Step 12: Sending email to: {user_email}")
+            email_sent = send_pdf_via_email(user_email, pdf_path, "Content Pipeline User")
+            if email_sent:
                 slack_app.client.chat_postMessage(
                     channel=dm_channel_id,
                     text=f"📧 Report also sent to your email: {user_email}"
                 )
-
+                logger.info("🔹 Step 13: Email sent successfully")
+            else:
+                logger.warning(f"Failed to send email to {user_email}")
+        
+        logger.info("🎉 Keyword processing completed successfully")
+        
     except Exception as e:
-        print(f"[Processing Error] {e}")
-        slack_app.client.chat_postMessage(
-            channel=channel_id or command.get("user_id"),
-            text=f"❌ Something went wrong:\n```{e}```"
-        )
+        logger.error(f"❌ Error in keyword processing: {e}")
+        error_message = f"❌ Sorry, I encountered an error while processing your keywords:\n```{str(e)}```"
+        
+        try:
+            slack_app.client.chat_postMessage(
+                channel=channel_id or user_id,
+                text=error_message
+            )
+        except Exception as slack_error:
+            logger.error(f"Failed to send error message to Slack: {slack_error}")
 
-# Slack Event Handler
-
+# ---------------------- Slack Event Handlers ----------------------
 @slack_app.event("app_mention")
-def handle_app_mention(body, say):
-    user = body["event"]["user"]
-    say(f"Hello <@{user}>! I'm running on Render! 🚀")
-
-
-@slack_app.event("message")
-def handle_keyword_messages(event, say):
-    text = event.get("text", "")
-    user_id = event.get("user")
-    channel_id = event.get("channel")
-
-    if "bot_id" in event:
-        return
-
-    if text.lower().startswith("keyword"):
-        say("✅ Received keywords. Processing...")
-        command_like = {"user_id": user_id, "text": text}
-
-        threading.Thread(
-            target=process_keywords_async,
-            args=(command_like, slack_app, channel_id),
-            daemon=True
-        ).start()
-
-
-@slack_app.event("file_shared")
-def handle_file_shared(event, say):
+def handle_app_mention(body, say, logger):
+    """Handle when the bot is mentioned"""
     try:
-        print("📂 Starting CSV/PDF/Text file event handler...")
+        event = body["event"]
+        user = event["user"]
+        text = event.get("text", "")
+        
+        logger.info(f"Bot mentioned by user {user}: {text}")
+    except Exception as slack_error:
+            logger.error(f"Failed to send error message to Slack: {slack_error}")  
+            help_text = f"""
+Hello <@{user}>! 👋 I'm your Content Pipeline Bot!
 
-        file_id = event["file"]["id"]
-        print(f"📎 File ID received: {file_id}")
+Here's how to use me:
 
-        file_info = slack_app.client.files_info(file=file_id)["file"]
-        file_url = file_info["url_private_download"]
-        user_id = file_info["user"]
-        mimetype = file_info.get("mimetype", "")
-        file_name = file_info.get("name", "unknown")
-
-        print(f"✅ Received file: {file_name}")
-        print(f"📄 MIME Type: {mimetype}")
-
-        headers = {"Authorization": f"Bearer {slack_app.client.token}"}
-        r = requests.get(file_url, headers=headers)
-        if r.status_code != 200:
-            print(f"❌ Failed to download file: {r.status_code}")
-            say("❌ Failed to download the file.")
-            return
-        print("📥 File downloaded successfully.")
-
-        # ----------------- Extract text -----------------
-        file_text = ""
-        if "csv" in mimetype:
-            print("🧠 Detected CSV file, starting to parse...")
-            try:
-                decoded = r.content.decode("utf-8")
-                reader = csv.reader(io.StringIO(decoded))
-                for row in reader:
-                    for cell in row:
-                        if cell.strip().lower() != "keyword":
-                            file_text += cell.strip() + "\n"
-                print("✅ CSV parsing completed successfully.")
-            except Exception as e:
-                print(f"⚠️ CSV parsing failed: {e}")
-                say(f"⚠️ Failed to parse CSV: {e}")
-                return
-
-        elif "pdf" in mimetype:
-            print("📘 Detected PDF file, starting to extract text...")
-            try:
-                reader = PdfReader(io.BytesIO(r.content))
-                for page in reader.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        file_text += page_text + "\n"
-                print("✅ PDF text extraction completed.")
-            except Exception as e:
-                print(f"⚠️ PDF parsing failed: {e}")
-                say(f"⚠️ Failed to parse PDF: {e}")
-                return
-
-        else:
-            print("📄 Treating file as plain text.")
-            try:
-                file_text = r.text
-                print("✅ Text file read successfully.")
-            except Exception as e:
-                print(f"⚠️ Text file read failed: {e}")
-                say(f"⚠️ Failed to read file: {e}")
-                return
-
-        if not file_text.strip():
-            print("⚠️ No text content found in file.")
-            say("⚠️ No text found in the uploaded file.")
-            return
-
-        say("✅ File received. Processing in background...")
-        print("🧠 Running keyword clustering and idea generation in background...")
-
-        command_like = {"user_id": user_id, "text": file_text}
-        threading.Thread(
-            target=process_keywords_async,
-            args=(command_like, slack_app, user_id),
-            daemon=True
-        ).start()
-
-        print("🎉 CSV processing thread started successfully!")
-
-    except Exception as e:
-        print(f"⚠️ Error in file_shared event handler: {e}")
-        say(f"⚠️ Error processing uploaded file: {e}")
-
-
-# FastAPI Endpoint 
-
-@app.post("/slack/events")
-async def endpoint(req: Request):
-    return await handler.handle(req)
-
-@app.get("/")
-def home():
-    return {"status": "Slack Content Bot is live on Render!"}
-
-from fastapi import Request
-from fastapi.responses import JSONResponse
-
-@app.api_route("/", methods=["GET", "HEAD"])
-async def root(request: Request):
-    # For HEAD requests, return an empty content
-    if request.method == "HEAD":
-        return JSONResponse(status_code=200, content={})
-    
-    # For GET requests, return a small message
-    return JSONResponse(status_code=200, content={"status": "Slack Content Bot is live on Render!"})
-
+📝 *Text Input:*
+• Start with `keyword` followed by your keywords:"""

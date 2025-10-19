@@ -1,9 +1,8 @@
 # main.py
 import os
-import threading
 import uvicorn
+from app.slack_app import app, slack_app  # Import both apps
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from app.slack_app import slack_app, app  # Your FastAPI app
 
 # -----------------------------
 # Load environment variables
@@ -13,24 +12,23 @@ SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))
 
-if not SLACK_BOT_TOKEN or not SLACK_SIGNING_SECRET or not SLACK_APP_TOKEN:
-    raise ValueError(
-        "⚠️ Slack tokens not found. Make sure SLACK_BOT_TOKEN, "
-        "SLACK_SIGNING_SECRET, and SLACK_APP_TOKEN are set."
-    )
+if not all([SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, SLACK_APP_TOKEN]):
+    raise ValueError("⚠️ Missing Slack tokens in environment variables")
 
 # -----------------------------
-# Run Slack Socket Mode in a background thread
+# Start Slack Socket Mode
 # -----------------------------
-def run_slack_bot():
-    print("⚡️ Starting Slack Socket Mode bot...")
-    SocketModeHandler(slack_app, SLACK_APP_TOKEN).start()
-
-# Start Slack bot in a daemon thread
-threading.Thread(target=run_slack_bot, daemon=True).start()
+def start_slack_handler():
+    """Start Slack Socket Mode in background"""
+    try:
+        print("⚡️ Starting Slack Socket Mode handler...")
+        handler = SocketModeHandler(slack_app, SLACK_APP_TOKEN)
+        handler.start()
+    except Exception as e:
+        print(f"❌ Failed to start Slack handler: {e}")
 
 # -----------------------------
-# FastAPI health check endpoints
+# FastAPI Routes
 # -----------------------------
 @app.get("/")
 def home():
@@ -41,18 +39,23 @@ def health():
     return {"status": "ok"}
 
 # -----------------------------
-# Run FastAPI on Render port
+# Main execution
 # -----------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🌐 Starting FastAPI server on port {port} for Render health checks...")
-
-    # Start Slack bot in a daemon thread AFTER FastAPI starts
-    import threading
-    def run_slack_bot():
-        print("⚡️ Starting Slack Socket Mode bot...")
-        SocketModeHandler(slack_app, SLACK_APP_TOKEN).start()
+    print(f"🚀 Starting application on port {PORT}")
     
-    threading.Thread(target=run_slack_bot, daemon=True).start()
-
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Start Slack handler
+    import threading
+    slack_thread = threading.Thread(target=start_slack_handler, daemon=True)
+    slack_thread.start()
+    
+    print("✅ Slack handler started in background")
+    print("🌐 Starting FastAPI server...")
+    
+    # Start FastAPI
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=PORT,
+        log_level="info"
+    )
